@@ -47,8 +47,7 @@ DEFAULT_BAZEL_RC_FILE = ""
 DEFAULT_DOCKER_RUN_PRIVILEGED = False
 DEFAULT_DOCKER_MACHINE = None
 DEFAULT_WORKSPACE_HEX = False
-
-DOCKER_SPECIAL_NETWORK_NAMES = ["host", "bridge", "none"]
+DEFAULT_GPUS=""
 
 logger = logging.getLogger("dazel")
 
@@ -66,7 +65,7 @@ class DockerInstance:
                        env_vars, network, run_deps, docker_compose_file, docker_compose_command,
                        docker_compose_project_name, docker_compose_services, bazel_user_output_root,
                        bazel_rc_file, docker_run_privileged, docker_machine, dazel_run_file,
-                       workspace_hex, delegated_volume, user, docker_build_args):
+                       workspace_hex, delegated_volume, user, docker_build_args, gpus):
         real_directory = os.path.realpath(directory)
         self.workspace_hex_digest = ""
         self.instance_name = instance_name
@@ -110,6 +109,7 @@ class DockerInstance:
         self._add_gpus(gpus)
         self._add_run_deps(run_deps)
         self._add_compose_services(docker_compose_services)
+        self._add_gpus(gpus)
 
     @classmethod
     def from_config(cls):
@@ -152,6 +152,7 @@ class DockerInstance:
                 delegated_volume=config.get("DAZEL_DELEGATED_VOLUME", "DEFAULT_DELEGATED_VOLUME"),
                 user=config.get("DAZEL_USER", DEFAULT_USER),
                 docker_build_args=config.get("DAZEL_DOCKER_BUILD_ARGS", DEFAULT_DOCKER_BUILD_ARGS),
+                gpus=config.get("DAZEL_GPUS", DEFAULT_GPUS)
         )
 
     def send_command(self, args):
@@ -402,13 +403,12 @@ class DockerInstance:
     def _run_container(self):
         """Runs the container itself."""
         logger.info("Starting docker container '%s'..." % self.instance_name)
-        command = "%s stop %s" % (self.docker_command, self.instance_name)
-        self._run_silent_command(self._with_docker_machine(command), ignore_output=True)
-        command = "%s rm %s" % (self.docker_command, self.instance_name)
-        self._run_silent_command(self._with_docker_machine(command), ignore_output=True)
-        command = "%s run -id --name=%s %s %s %s %s %s %s %s %s %s%s %s" % (
+        command = "%s stop %s >/dev/null 2>&1 ; " % (self.docker_command, self.instance_name)
+        command += "%s rm %s >/dev/null 2>&1 ; " % (self.docker_command, self.instance_name)
+        command += "%s run -id --name=%s %s %s %s %s %s %s %s %s %s%s %s" % (
             self.docker_command,
             self.instance_name,
+            self.gpus,
             "--privileged" if self.docker_run_privileged else "",
             ("--user=%s" % self.user
              if self.user else ""),
@@ -527,7 +527,7 @@ class DockerInstance:
         if not gpus:
             return
 
-        # DAZEL_GPUS can be a python iterable or a comma-separated string.
+        # DAZEL_PORTS can be a python iterable or a comma-separated string.
         if isinstance(gpus, str):
             gpus = [g.strip() for g in gpus.split(",")]
         elif gpus and not isinstance(gpus, collections.Iterable):
